@@ -1,0 +1,17 @@
+[package]
+name = "ffexample"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ffmpeg-next = { version = "5.0.3", features = ["build"]}
+ffmpeg-sys-next = { version = "5.0.1", features = ["build"] }
+
+anyhow = "1.0"
+clap = { version = "3", features = ["derive"]}
+
+[[bin]]
+name = "demuxing"
+path = "src/bin/demuxing.rs"
