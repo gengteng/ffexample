@@ -15,3 +15,11 @@ clap = { version = "3", features = ["derive"]}
 [[bin]]
 name = "demuxing"
 path = "src/bin/demuxing.rs"
+
+[[bin]]
+name = "remuxing"
+path = "src/bin/remuxing.rs"
+
+[[bin]]
+name = "muxing"
+path = "src/bin/muxing.rs"

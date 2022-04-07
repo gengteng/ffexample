@@ -1,4 +1,4 @@
-use ffexample::Image;
+use ffexample::{Image, Timestamp};
 
 use clap::Parser;
 use ffmpeg_next::decoder::Decoder;
@@ -211,10 +211,7 @@ impl AudioContext {
                 "audio_frame n:{} nb_samples:{} pts:{}",
                 self.frame_count,
                 self.frame.samples(),
-                match self.frame.pts() {
-                    Some(pts) => format!("{:.4}", pts as f64 * f64::from(self.dec_ctx.time_base())),
-                    None => "NOPTS".into(),
-                }
+                Timestamp(self.frame.pts()).to_time(self.dec_ctx.time_base())
             );
             self.frame_count += 1;
         }
@@ -340,8 +337,7 @@ impl DemuxingContext {
 
 fn main() -> anyhow::Result<()> {
     let opts = Opts::parse();
-    DemuxingContext::new(opts)?.run()?;
-    Ok(())
+    DemuxingContext::new(opts)?.run()
 }
 
 fn sample_to_str(sample: format::Sample) -> Option<&'static str> {
