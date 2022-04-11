@@ -211,7 +211,7 @@ impl AudioContext {
                 "audio_frame n:{} nb_samples:{} pts:{}",
                 self.frame_count,
                 self.frame.samples(),
-                Timestamp(self.frame.pts()).to_time(self.dec_ctx.time_base())
+                Timestamp::new(self.frame.pts(), self.dec_ctx.time_base())
             );
             self.frame_count += 1;
         }

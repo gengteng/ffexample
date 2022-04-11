@@ -1,5 +1,5 @@
 use clap::Parser;
-use ffexample::Timestamp;
+use ffexample::log_packet;
 use ffmpeg_next::format::context;
 use ffmpeg_next::media::Type;
 use ffmpeg_next::{Error, Packet, Rational};
@@ -106,24 +106,6 @@ impl RemuxingContext {
 
         Ok(())
     }
-}
-
-fn log_packet(time_base: Rational, packet: &Packet, tag: &'static str) {
-    let pts = Timestamp(packet.pts());
-    let dts = Timestamp(packet.dts());
-    let duration = Timestamp(Some(packet.duration()));
-
-    println!(
-        "{}: pts:{} pts_time:{} dts:{} dts_time:{} duration:{} duration_time:{} stream_index:{}",
-        tag,
-        pts,
-        pts.to_time(time_base),
-        dts,
-        dts.to_time(time_base),
-        duration,
-        duration.to_time(time_base),
-        packet.stream()
-    );
 }
 
 fn main() -> anyhow::Result<()> {

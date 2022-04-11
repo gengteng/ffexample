@@ -1,25 +1,54 @@
+mod audio_frame;
 mod image;
+mod picture;
 
-use ffmpeg_next::Rational;
+pub use audio_frame::*;
+use ffmpeg_next::{Packet, Rational};
 pub use image::*;
+pub use picture::*;
 use std::fmt::{Display, Formatter};
 
-pub struct Timestamp(pub Option<i64>);
+pub struct Timestamp {
+    ts: Option<i64>,
+    base: Rational,
+}
 
 impl Timestamp {
-    pub fn to_time(&self, time_base: Rational) -> String {
-        match self.0 {
-            None => self.to_string(),
-            Some(pts) => format!("{:.4}", pts as f64 * f64::from(time_base)),
+    pub fn new(ts: Option<i64>, base: Rational) -> Self {
+        Self { ts, base }
+    }
+
+    pub fn ts_string(&self) -> String {
+        match self.ts {
+            None => "NOPTS".into(),
+            Some(ts) => format!("{}", ts),
         }
     }
 }
 
 impl Display for Timestamp {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self.0 {
+        match self.ts {
             None => write!(f, "NOPTS"),
-            Some(pts) => write!(f, "{}", pts),
+            Some(pts) => write!(f, "{:.4}", pts as f64 * f64::from(self.base)),
         }
     }
+}
+
+pub fn log_packet(time_base: Rational, packet: &Packet, tag: &'static str) {
+    let pts = Timestamp::new(packet.pts(), time_base);
+    let dts = Timestamp::new(packet.dts(), time_base);
+    let duration = Timestamp::new(Some(packet.duration()), time_base);
+
+    println!(
+        "{}: pts:{} pts_time:{} dts:{} dts_time:{} duration:{} duration_time:{} stream_index:{}",
+        tag,
+        pts.ts_string(),
+        pts,
+        dts.ts_string(),
+        dts,
+        duration.ts_string(),
+        duration,
+        packet.stream()
+    );
 }
