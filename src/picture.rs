@@ -4,10 +4,9 @@ use ffmpeg_sys_next::{
     av_frame_alloc, av_frame_free, av_frame_get_buffer, av_frame_make_writable, AVFrame,
     AVPixelFormat,
 };
-use std::mem::transmute;
 
 pub struct Picture {
-    frame: *mut AVFrame,
+    frame: frame::Video,
 }
 
 impl Picture {
@@ -33,31 +32,37 @@ impl Picture {
             frame
         };
 
-        Ok(Self { frame })
+        Ok(Self {
+            frame: unsafe { frame::Video::wrap(frame) },
+        })
     }
 
-    pub fn as_video(&self) -> frame::Video {
-        unsafe { frame::Video::wrap(self.frame as _) }
+    pub fn as_video(&self) -> &frame::Video {
+        &self.frame
+    }
+
+    pub fn as_video_mut(&mut self) -> &mut frame::Video {
+        &mut self.frame
     }
 
     pub fn format(&self) -> Pixel {
-        unsafe { transmute::<i32, AVPixelFormat>((*self.frame).format) }.into()
+        self.frame.format()
     }
 
     pub fn width(&self) -> u32 {
-        unsafe { (*self.frame).width as _ }
+        self.frame.width()
     }
 
     pub fn height(&self) -> u32 {
-        unsafe { (*self.frame).height as _ }
+        self.frame.height()
     }
 
     pub fn set_pts(&mut self, pts: i64) {
-        unsafe { (*self.frame).pts = pts }
+        self.frame.set_pts(Some(pts))
     }
 
     pub fn make_writable(&mut self) -> anyhow::Result<()> {
-        let ret = unsafe { av_frame_make_writable(self.frame) };
+        let ret = unsafe { av_frame_make_writable(self.frame.as_mut_ptr()) };
         if ret < 0 {
             anyhow::bail!("Failed to make frame writable: {}", Error::from(ret));
         }
@@ -65,14 +70,15 @@ impl Picture {
     }
 
     pub fn fill(&mut self, frame_index: u32) {
+        let frame = unsafe { self.frame.as_mut_ptr() };
         let i = frame_index;
 
         /* Y */
         for y in 0..self.height() {
             for x in 0..self.width() {
                 unsafe {
-                    let ls = (*self.frame).linesize[0] as u32;
-                    (*self.frame).data[0]
+                    let ls = (*frame).linesize[0] as u32;
+                    (*frame).data[0]
                         .offset((y * ls + x) as isize)
                         .write((x + y + i * 3) as u8);
                 }
@@ -83,23 +89,17 @@ impl Picture {
         for y in 0..self.height() / 2 {
             for x in 0..self.width() / 2 {
                 unsafe {
-                    let ls1 = (*self.frame).linesize[1] as u32;
-                    let ls2 = (*self.frame).linesize[2] as u32;
+                    let ls1 = (*frame).linesize[1] as u32;
+                    let ls2 = (*frame).linesize[2] as u32;
 
-                    (*self.frame).data[1]
+                    (*frame).data[1]
                         .offset((y * ls1 + x) as isize)
                         .write((128 + y + i * 2) as u8);
-                    (*self.frame).data[2]
+                    (*frame).data[2]
                         .offset((y * ls2 + x) as isize)
                         .write((64 + x + i * 5) as u8);
                 }
             }
         }
-    }
-}
-
-impl Drop for Picture {
-    fn drop(&mut self) {
-        unsafe { av_frame_free((&mut self.frame) as _) }
     }
 }

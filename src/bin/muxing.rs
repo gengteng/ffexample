@@ -55,8 +55,8 @@ impl FrameWriter for VideoContext {
         if let (Some(sws_ctx), Some(tmp_frame)) = (self.sws_ctx.as_mut(), self.tmp_frame.as_mut()) {
             tmp_frame.fill(self.next_pts as u32);
             let in_video = tmp_frame.as_video();
-            let mut out_video = self.frame.as_video();
-            sws_ctx.run(&in_video, &mut out_video)?;
+            let out_video = self.frame.as_video_mut();
+            sws_ctx.run(in_video, out_video)?;
         } else {
             self.frame.fill(self.next_pts as u32);
         }
@@ -81,6 +81,7 @@ impl FrameWriter for VideoContext {
                 match e {
                     Error::Eof => {
                         self.encode = false;
+                        break;
                     }
                     Error::Other { errno: 35 } => {
                         break;
@@ -180,7 +181,7 @@ impl FrameWriter for AudioContext {
             self.frame.make_writable()?;
 
             self.swr_ctx
-                .run(&self.tmp_frame.as_audio(), &mut self.frame.as_audio())?;
+                .run(self.tmp_frame.as_audio(), self.frame.as_audio_mut())?;
             self.frame.set_pts(
                 self.samples_count
                     .rescale(Rational::new(1, sample_rate as i32), self.time_base),
@@ -198,6 +199,7 @@ impl FrameWriter for AudioContext {
                 match e {
                     Error::Eof => {
                         self.encode = false;
+                        break;
                     }
                     Error::Other { errno: 35 } => {
                         break;
@@ -256,9 +258,7 @@ impl Muxing {
             //     .encoder()
             //     .ok_or_else(|| anyhow::anyhow!("Failed to get codec of {}", video_codec_id.name()))?
             //     .video()?;
-            let mut video_encoder_ctx = codec::encoder::Encoder(codec::Context::new())
-                .video()?
-                .open_as(video_codec_id)?;
+            let mut video_encoder_ctx = codec::encoder::Encoder(codec::Context::new()).video()?;
             video_encoder_ctx.set_bit_rate(400_000);
 
             // 分辨率必须为 2 的倍数
@@ -288,6 +288,8 @@ impl Muxing {
                 // 某些格式希望流标头是分开的。
                 video_encoder_ctx.set_flags(codec::Flags::empty() | codec::Flags::GLOBAL_HEADER);
             }
+
+            let video_encoder_ctx = video_encoder_ctx.open_as(video_codec_id)?;
 
             // open video
             let frame = Picture::new(
@@ -343,9 +345,7 @@ impl Muxing {
                 .encoder()
                 .ok_or_else(|| anyhow::anyhow!("Failed to get codec of {}", audio_codec_id.name()))?
                 .audio()?;
-            let mut audio_encoder_ctx = codec::encoder::Encoder(codec::Context::new())
-                .audio()?
-                .open_as(audio_codec_id)?;
+            let mut audio_encoder_ctx = codec::encoder::Encoder(codec::Context::new()).audio()?;
             audio_encoder_ctx.set_format(
                 audio_codec
                     .formats()
@@ -393,6 +393,8 @@ impl Muxing {
                 // 某些格式希望流标头是分开的。
                 audio_encoder_ctx.set_flags(codec::Flags::empty() | codec::Flags::GLOBAL_HEADER);
             }
+
+            let audio_encoder_ctx = audio_encoder_ctx.open_as(audio_codec_id)?;
 
             // open audio
             let sample_rate = audio_encoder_ctx.rate() as f32;

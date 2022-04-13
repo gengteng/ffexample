@@ -6,7 +6,7 @@ use ffmpeg_sys_next::{
 };
 
 pub struct AudioFrame {
-    frame: *mut AVFrame,
+    frame: frame::Audio,
 }
 
 impl AudioFrame {
@@ -41,30 +41,35 @@ impl AudioFrame {
             frame
         };
 
-        Ok(Self { frame })
+        Ok(Self {
+            frame: unsafe { frame::Audio::wrap(frame) },
+        })
     }
 
     pub fn data_mut(&mut self) -> &mut [u8] {
         unsafe {
-            std::slice::from_raw_parts_mut(
-                (*self.frame).data[0],
-                (*self.frame).linesize[0] as usize,
-            )
+            let frame = self.frame.as_mut_ptr();
+            std::slice::from_raw_parts_mut((*frame).data[0], (*frame).linesize[0] as usize)
         }
     }
 
     pub fn data(&self) -> &[u8] {
         unsafe {
-            std::slice::from_raw_parts((*self.frame).data[0], (*self.frame).linesize[0] as usize)
+            let frame = self.frame.as_ptr();
+            std::slice::from_raw_parts((*frame).data[0], (*frame).linesize[0] as usize)
         }
     }
 
-    pub fn as_audio(&self) -> frame::Audio {
-        unsafe { frame::Audio::wrap(self.frame as _) }
+    pub fn as_audio(&self) -> &frame::Audio {
+        &self.frame
+    }
+
+    pub fn as_audio_mut(&mut self) -> &mut frame::Audio {
+        &mut self.frame
     }
 
     pub fn make_writable(&mut self) -> anyhow::Result<()> {
-        let ret = unsafe { av_frame_make_writable(self.frame) };
+        let ret = unsafe { av_frame_make_writable(self.frame.as_mut_ptr()) };
         if ret < 0 {
             anyhow::bail!("Failed to make frame writable: {}", Error::from(ret));
         }
@@ -72,16 +77,10 @@ impl AudioFrame {
     }
 
     pub fn nb_samples(&self) -> i32 {
-        unsafe { (*self.frame).nb_samples }
+        self.frame.samples() as i32
     }
 
     pub fn set_pts(&mut self, pts: i64) {
-        unsafe { (*self.frame).pts = pts }
-    }
-}
-
-impl Drop for AudioFrame {
-    fn drop(&mut self) {
-        unsafe { av_frame_free((&mut self.frame) as _) }
+        self.frame.set_pts(Some(pts));
     }
 }
