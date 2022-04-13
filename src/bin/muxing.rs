@@ -6,13 +6,11 @@ use ffmpeg_next::encoder::{audio, video, Decision};
 use ffmpeg_next::format::sample::Type;
 use ffmpeg_next::format::{context, Flags, Pixel, Sample};
 use ffmpeg_next::software::{resampling, scaling};
-use ffmpeg_next::{codec, format, ChannelLayout, Error, Rational};
-use ffmpeg_sys_next::av_compare_ts;
+use ffmpeg_next::{codec, format, ChannelLayout, Error, Rational, Rescale, Rounding};
+use ffmpeg_sys_next::{av_compare_ts, av_rescale_rnd};
 use std::ops::Deref;
 use std::path::PathBuf;
 
-// #define STREAM_DURATION   10.0
-// #define STREAM_FRAME_RATE 25 /* 25 images/s */
 const STREAM_DURATION: f64 = 10.0;
 const STREAM_FRAME_RATE: i32 = 25;
 
@@ -29,7 +27,6 @@ trait FrameWriter {
 
 struct VideoContext {
     video_encoder_ctx: video::Encoder,
-    video_codec_id: Id,
     video_stream_index: usize,
     time_base: Rational,
     frame: Picture,
@@ -118,13 +115,13 @@ impl FrameWriter for VideoContext {
 
 struct AudioContext {
     audio_encoder_ctx: audio::Encoder,
-    audio_codec_id: Id,
     audio_stream_index: usize,
     time_base: Rational,
     t: f32,
     tincr: f32,
     tincr2: f32,
     nb_samples: u32,
+    samples_count: i64,
     frame: AudioFrame,
     tmp_frame: AudioFrame,
     swr_ctx: resampling::Context,
@@ -146,17 +143,7 @@ impl FrameWriter for AudioContext {
             return Ok(false);
         }
 
-        let data = self.frame.data_mut();
-        // for (j = 0; j <frame->nb_samples; j++) {
-        //         v = (int)(sin(ost->t) * 10000);
-        //         for (i = 0; i < ost->enc->channels; i++)
-        //             *q++ = v;
-        //         ost->t     += ost->tincr;
-        //         ost->tincr += ost->tincr2;
-        //     }
-        //
-        //     frame->pts = ost->next_pts;
-        //     ost->next_pts  += frame->nb_samples;
+        let data = self.tmp_frame.data_mut();
         for _ in 0..self.nb_samples {
             let v = (self.t.sin() * 10000f32) as i32;
             for i in 0..self.audio_encoder_ctx.channels() as usize {
@@ -166,14 +153,80 @@ impl FrameWriter for AudioContext {
             self.tincr += self.tincr2;
         }
 
-        // frame->pts = ost->next_pts;
-        // ost->next_pts  += frame->nb_samples;
+        self.tmp_frame.set_pts(self.next_pts);
+        self.next_pts += self.tmp_frame.nb_samples() as i64;
 
         Ok(true)
     }
 
     fn write_frame(&mut self, output: &mut context::Output) -> anyhow::Result<()> {
-        todo!()
+        let get = self.get_frame()?;
+        if get {
+            let delay = self
+                .swr_ctx
+                .delay()
+                .ok_or_else(|| anyhow::anyhow!("Failed to get delay"))?;
+            let sample_rate = self.audio_encoder_ctx.rate() as i64;
+            let dst_nb_samples = unsafe {
+                av_rescale_rnd(
+                    delay.output + self.frame.nb_samples() as i64,
+                    sample_rate,
+                    sample_rate,
+                    Rounding::Up.into(),
+                )
+            };
+            assert_eq!(dst_nb_samples, self.nb_samples as i64);
+
+            self.frame.make_writable()?;
+
+            self.swr_ctx
+                .run(&self.tmp_frame.as_audio(), &mut self.frame.as_audio())?;
+            self.frame.set_pts(
+                self.samples_count
+                    .rescale(Rational::new(1, sample_rate as i32), self.time_base),
+            );
+            self.samples_count += dst_nb_samples;
+
+            self.audio_encoder_ctx
+                .send_frame(self.frame.as_audio().deref())?;
+        } else {
+            self.audio_encoder_ctx.send_eof()?;
+        }
+
+        loop {
+            if let Err(e) = self.audio_encoder_ctx.receive_packet(&mut self.packet) {
+                match e {
+                    Error::Eof => {
+                        self.encode = false;
+                    }
+                    Error::Other { errno: 35 } => {
+                        break;
+                    }
+                    e => {
+                        anyhow::bail!("Error encoding a frame: {}", e);
+                    }
+                }
+            }
+
+            /* rescale output packet timestamp values from codec to stream timebase */
+            self.packet.rescale_ts(
+                Rational::from(unsafe { (*self.audio_encoder_ctx.as_ptr()).time_base }),
+                self.time_base,
+            );
+            self.packet.set_stream(self.audio_stream_index);
+
+            /* Write the compressed frame to the media file. */
+            log_packet(self.time_base, &self.packet, "output");
+
+            if let Err(e) = self.packet.write_interleaved(output) {
+                anyhow::bail!("Error while writing output packet: {}", e);
+            }
+            // pkt is now blank (av_interleaved_write_frame() takes ownership of
+            // its contents and resets pkt), so that no unreferencing is necessary.
+            // This would be different if one used av_write_frame().
+        }
+
+        Ok(())
     }
 }
 
@@ -269,7 +322,6 @@ impl Muxing {
 
             Some(VideoContext {
                 video_encoder_ctx,
-                video_codec_id,
                 video_stream_index: video_stream.index(),
                 time_base: video_stream.time_base(),
                 frame,
@@ -384,13 +436,13 @@ impl Muxing {
 
             Some(AudioContext {
                 audio_encoder_ctx,
-                audio_codec_id,
                 audio_stream_index: audio_stream.index(),
                 time_base: audio_stream.time_base(),
                 t,
                 tincr,
                 tincr2,
                 nb_samples,
+                samples_count: 0,
                 frame,
                 tmp_frame,
                 swr_ctx,

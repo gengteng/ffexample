@@ -2,7 +2,7 @@ use clap::Parser;
 use ffexample::log_packet;
 use ffmpeg_next::format::context;
 use ffmpeg_next::media::Type;
-use ffmpeg_next::{Error, Packet, Rational};
+use ffmpeg_next::{Error, Packet};
 use std::path::PathBuf;
 
 /// Remux streams from one container format to another.

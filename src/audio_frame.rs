@@ -1,7 +1,8 @@
 use ffmpeg_next::format::Sample;
-use ffmpeg_next::{ChannelLayout, Error};
+use ffmpeg_next::{frame, ChannelLayout, Error};
 use ffmpeg_sys_next::{
-    av_frame_alloc, av_frame_free, av_frame_get_buffer, AVFrame, AVSampleFormat,
+    av_frame_alloc, av_frame_free, av_frame_get_buffer, av_frame_make_writable, AVFrame,
+    AVSampleFormat,
 };
 
 pub struct AudioFrame {
@@ -50,6 +51,32 @@ impl AudioFrame {
                 (*self.frame).linesize[0] as usize,
             )
         }
+    }
+
+    pub fn data(&self) -> &[u8] {
+        unsafe {
+            std::slice::from_raw_parts((*self.frame).data[0], (*self.frame).linesize[0] as usize)
+        }
+    }
+
+    pub fn as_audio(&self) -> frame::Audio {
+        unsafe { frame::Audio::wrap(self.frame as _) }
+    }
+
+    pub fn make_writable(&mut self) -> anyhow::Result<()> {
+        let ret = unsafe { av_frame_make_writable(self.frame) };
+        if ret < 0 {
+            anyhow::bail!("Failed to make frame writable: {}", Error::from(ret));
+        }
+        Ok(())
+    }
+
+    pub fn nb_samples(&self) -> i32 {
+        unsafe { (*self.frame).nb_samples }
+    }
+
+    pub fn set_pts(&mut self, pts: i64) {
+        unsafe { (*self.frame).pts = pts }
     }
 }
 
